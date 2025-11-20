@@ -11,3 +11,6 @@ test/WASS_TEST
 test/WASS_TEST.zip
 test/frames
 
+workdir/
+baseline_*.ply
+baseline_*.jpg
