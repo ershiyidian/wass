@@ -26,10 +26,6 @@ def load_image(path):
 
 def prepare_input(img, device):
     # Normalize to [0, 1] and convert to tensor (1, C, H, W)
-    # Imagenet mean/std? The paper code usually uses mean/std normalization.
-    # OpenStereo datasets usually normalize with mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-    # I should verify this but it's standard for pretrained backbones (timm).
-
     img = img.astype(np.float32) / 255.0
 
     mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
@@ -41,7 +37,6 @@ def prepare_input(img, device):
 
 def pad_image(img, divisor=32):
     b, c, h, w = img.shape
-    # Calculate padding
     pad_h = (divisor - h % divisor) % divisor
     pad_w = (divisor - w % divisor) % divisor
 
@@ -62,28 +57,37 @@ def main():
     output_path = os.path.join(workdir, "external_disparity.tiff")
 
     print(f"Loading images from {workdir}")
-    # WASS needs Right view disparity.
-    # We use Right as Left (Ref) and Left as Right (Tgt) for the model.
-    # Model output will be disparity for Right image.
-    # x_L = x_R - d (LightStereo convention if Input L=Right, R=Left)
-    # WASS expects x_L = x_R - d?
-    # WASS code: float xl = xr - disp.
-    # So WASS expects disp > 0.
-    # And x_L = x_R - disp.
-    # So this matches perfectly.
-
     left_img_cv = load_image(left_path)
     right_img_cv = load_image(right_path)
+
+    orig_h, orig_w = left_img_cv.shape[:2]
+
+    # Calculate scale factor
+    # Target disparity capacity: ~640 px.
+    # Model max disp: 192 px.
+    # Scale <= 192 / 640 = 0.3
+    # Let's use a safe scale.
+    # Also ensure width is multiple of 32 if possible or padding handles it.
+
+    scale_factor = 0.3
+    new_w = int(orig_w * scale_factor)
+    new_h = int(orig_h * scale_factor)
+
+    print(f"Resizing input from {orig_w}x{orig_h} to {new_w}x{new_h} (Scale: {scale_factor})")
+
+    left_img_resized = cv2.resize(left_img_cv, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    right_img_resized = cv2.resize(right_img_cv, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    ref_img = prepare_input(right_img_cv, device) # Right as Ref
-    tgt_img = prepare_input(left_img_cv, device) # Left as Target
+    # Swap Inputs for Right View Disparity
+    ref_img = prepare_input(right_img_resized, device)
+    tgt_img = prepare_input(left_img_resized, device)
 
     # Pad
     ref_img_padded, pad_h, pad_w = pad_image(ref_img)
-    tgt_img_padded, _, _ = pad_image(tgt_img) # Padding should be same
+    tgt_img_padded, _, _ = pad_image(tgt_img)
 
     # Load Model
     cfg = Config()
@@ -101,7 +105,6 @@ def main():
     if 'model' in state_dict:
          state_dict = state_dict['model']
 
-    # Remove 'module.' prefix if DDP was used
     new_state_dict = {}
     for k, v in state_dict.items():
         if k.startswith('module.'):
@@ -124,10 +127,17 @@ def main():
         w_orig = w_padded - pad_w
         disp_pred = disp_pred[:, :, :h_orig, :w_orig]
 
-        disp_np = disp_pred.squeeze().cpu().numpy()
+        # Upsample to original resolution
+        # Mode 'bilinear' needs 4D input
+        disp_upsampled = F.interpolate(disp_pred, size=(orig_h, orig_w), mode='bilinear', align_corners=False)
+
+        # Scale disparity values
+        # d_orig = d_small * (orig_w / new_w) = d_small / scale_factor
+        disp_upsampled = disp_upsampled / scale_factor
+
+        disp_np = disp_upsampled.squeeze().cpu().numpy()
 
     print(f"Saving disparity to {output_path}")
-    # Save as TIFF float32
     cv2.imwrite(output_path, disp_np)
     print("Done.")
 
