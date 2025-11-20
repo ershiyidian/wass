@@ -1,0 +1,15 @@
+# CAM0 CLAHE cliplimit parameter
+#
+#CAM0_CLAHE_CLIPLIMIT=2
+
+# CAM0 CLAHE tile grid size (set to 0 to disable CLAHE). 150 is a good value to start
+#
+#CAM0_CLAHE_TILEGRIDSIZE=0
+
+# CAM1 CLAHE cliplimit parameter
+#
+#CAM1_CLAHE_CLIPLIMIT=2
+
+# CAM1 CLAHE tile grid size (set to 0 to disable CLAHE). 150 is a good value to start
+#
+#CAM1_CLAHE_TILEGRIDSIZE=0

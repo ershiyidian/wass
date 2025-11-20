@@ -820,25 +820,47 @@ void sgbm_dense_stereo( StereoMatchEnv& env )
 
     cv::imwrite( (env.workdir/"/stereo_input.jpg").string(), WASS::Render::render_stereo_vertical(left_image,right_image) );
 
+    // Export rectified images for LightStereo
+    LOGI << "Exporting rectified images for LightStereo...";
+    cv::imwrite( (env.workdir/"rectified_left.png").string(), env.left_crop );
+    cv::imwrite( (env.workdir/"rectified_right.png").string(), env.right_crop );
+
+    // Call Python script for LightStereo
+    LOGI << "Running LightStereo inference...";
+    std::string cmd = "python3 run_lightstereo.py " + env.workdir.string();
+    int ret = std::system( cmd.c_str() );
+    if (ret != 0) {
+        LOGE << "LightStereo script failed with code " << ret;
+        throw std::runtime_error("LightStereo execution failed");
+    }
+
+    // Import disparity map from LightStereo
+    LOGI << "Importing external disparity map...";
+    cv::Mat disparity_import = cv::imread( (env.workdir/"external_disparity.tiff").string(), cv::IMREAD_UNCHANGED );
+    if (disparity_import.empty()) {
+        LOGE << "Failed to load external_disparity.tiff";
+        throw std::runtime_error("Failed to load external disparity");
+    }
+
+    // Ensure disparity map size matches
+    if (disparity_import.size() != env.roi_comb_right.size()) {
+        LOGI << "Resizing external disparity to match ROI size...";
+        cv::resize(disparity_import, disparity_import, env.roi_comb_right.size(), 0, 0, cv::INTER_CUBIC);
+    }
+
+    // Direct assignment to disp_float
+    cv::Mat disp_float = disparity_import;
+
+    /* SGBM Disabled
     cv::Mat disparity;
     LOGI << "computing dense disparity map... (may take a while)";
     dense_stereo->compute( right_image, left_image, disparity );
 
     disparity = disparity.colRange( numberOfDisparities, right_input.cols+numberOfDisparities );
-
-#if 0
-    /* Debug */
-    left_image = left_image.colRange( numberOfDisparities, right_input.cols+numberOfDisparities );
-    right_image = right_image.colRange( numberOfDisparities, right_input.cols+numberOfDisparities );
-    cv::imwrite((env.workdir/"stereo_L.png").string(),left_image);
-    cv::imwrite((env.workdir/"stereo_R.png").string(),right_image);
-    cv::imwrite((env.workdir/"stereo_D.png").string(),disparity);
-    /**/
-#endif
-
     //render_disparity16( env.workdir+"/disparity16.png", numberOfDisparities, minDisparity, disp_offset,disparity );
-
     cv::Mat disp_float = clean_and_convert_disparity( disparity, minDisparity, numberOfDisparities, disp_offset, 1.0/scale );
+    */
+
     WASS::Render::render_disparity_float( (env.workdir / "disparity_stereo_ouput.jpg").string(), disp_float);
 
     // DILATE
@@ -1054,7 +1076,7 @@ size_t triangulate( StereoMatchEnv& env )
         else
             LOGE << "not found or invalid image.";
     }
-    if( INCFG_GET( DISCARD_BURNED_AREAS ) ) 
+    if( INCFG_GET( DISCARD_BURNED_AREAS ) )
     {
         cv::Mat aux;
         cv::threshold(env.left, aux, 254.0, 1, cv::THRESH_BINARY  );
@@ -1073,7 +1095,7 @@ size_t triangulate( StereoMatchEnv& env )
         else
             LOGE << "not found or invalid image.";
     }
-    if( INCFG_GET( DISCARD_BURNED_AREAS ) ) 
+    if( INCFG_GET( DISCARD_BURNED_AREAS ) )
     {
         cv::Mat aux;
         cv::threshold(env.right, aux, 254.0, 1, cv::THRESH_BINARY  );
@@ -1307,8 +1329,8 @@ size_t triangulate( StereoMatchEnv& env )
                     dbg_R1.at< cv::Vec3b >( yr_i,xr ) = COLOR_CODE_POINT_HIGH_REPROJECTION_ERROR;
                     continue;
                 }
-                
-                
+
+
 #endif
 
 
@@ -2135,11 +2157,3 @@ int main( int argc, char* argv[] )
     }
 
 }
-
-
-
-
-
-
-
-
